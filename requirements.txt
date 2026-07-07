@@ -7,3 +7,5 @@ beautifulsoup4
 gspread
 google-auth
 pandas-datareader
+openpyxl
+xlrd
