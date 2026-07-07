@@ -62,7 +62,7 @@ def log_usage(name, action):
 def get_price_info(ticker):
     try:
         data = yf.Ticker(ticker)
-        hist = data.history(period="5d")
+        hist = data.history(period="1mo")  # 5d → 1mo に変更
         if len(hist) < 2:
             return None, None, None
         latest = hist["Close"].iloc[-1]
