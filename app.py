@@ -10,6 +10,8 @@ from google.oauth2.service_account import Credentials
 import csv
 import re
 from datetime import datetime
+import pandas_datareader as pdr
+from datetime import datetime, timedelta
 
 api_key = st.secrets["GEMINI_API_KEY"]
 client = genai.Client(api_key=api_key)
@@ -61,25 +63,21 @@ def log_usage(name, action):
 
 def get_price_info(ticker):
     try:
-        data = yf.Ticker(ticker)
-        hist = data.history(period="1mo")  # 5d → 1mo に変更
-        if len(hist) < 2:
+        # stooq経由で取得（例：7203.JPのような形式）
+        code = ticker.replace(".T", "")
+        stooq_ticker = f"{code}.JP"
+        end = datetime.today()
+        start = end - timedelta(days=30)
+        df = pdr.get_data_stooq(stooq_ticker, start=start, end=end)
+        if df is None or len(df) < 2:
             return None, None, None
-        latest = hist["Close"].iloc[-1]
-        prev = hist["Close"].iloc[-2]
+        df = df.sort_index()
+        latest = df["Close"].iloc[-1]
+        prev = df["Close"].iloc[-2]
         change_pct = (latest - prev) / prev * 100
-        info = data.info
-        name = (
-            info.get("longNameJa")
-            or info.get("shortNameJa")
-            or info.get("shortName")
-            or info.get("longName")
-            or ticker
-        )
-        return latest, change_pct, name
+        return latest, change_pct, code
     except Exception:
         return None, None, None
-
 
 def get_chart_data(ticker):
     try:
