@@ -63,23 +63,35 @@ def log_usage(name, action):
         writer.writerow([now, name, action])
 
 
-def get_price_info_jpx(code):
-    """JPXの当日データから株価を取得"""
+def get_price_info(code):
+    """J-Quants APIで株価を取得"""
     try:
-        # JPXの全銘柄当日データ（無料公開）
-        url = "https://www.jpx.co.jp/markets/statistics-equities/daily/tvdivq0000001vg2-att/data_j.xls"
-        df = pd.read_excel(url, header=0)
-        df.columns = df.columns.str.strip()
-        
-        # コードで絞り込み
-        row = df[df["コード"].astype(str).str.zfill(4) == str(code).zfill(4)]
-        if row.empty:
+        api_key = st.secrets["JQUANTS_API_KEY"]
+        # 当日または直近の日次株価を取得
+        url = f"https://api.jquants.com/v1/prices/daily_quotes?code={code}&date="
+        from datetime import date
+        today = date.today().strftime("%Y%m%d")
+        headers = {"Authorization": f"Bearer {api_key}"}
+        r = requests.get(url + today, headers=headers, timeout=10)
+        data = r.json()
+
+        if not data.get("daily_quotes"):
+            # 当日データがなければ直近を取得
+            url2 = f"https://api.jquants.com/v1/prices/daily_quotes?code={code}"
+            r2 = requests.get(url2, headers=headers, timeout=10)
+            data = r2.json()
+
+        quotes = data.get("daily_quotes", [])
+        if len(quotes) < 2:
             return None, None, None
-        
-        name = row["銘柄名"].iloc[0]
-        close = float(row["終値"].iloc[0])
-        prev_close = float(row["前日終値"].iloc[0])
+
+        quotes = sorted(quotes, key=lambda x: x["Date"])
+        latest = quotes[-1]
+        prev = quotes[-2]
+        close = float(latest["Close"])
+        prev_close = float(prev["Close"])
         change_pct = (close - prev_close) / prev_close * 100
+        name = latest.get("CompanyName", code)
         return close, change_pct, name
     except Exception as e:
         st.write(f"DEBUG {code}: {e}")
@@ -288,7 +300,7 @@ if name:
         for jp_name, code, _ in matches:
             ticker = code + ".T"
             code = ticker.replace(".T", "")
-            price, change_pct, stock_name_jpx = get_price_info_jpx(code)
+            price, change_pct, stock_name_jpx = get_price_info(code)
             if price is not None:
                 sign = "+" if change_pct >= 0 else ""
                 tbody += (
@@ -317,7 +329,7 @@ if name:
     if ticker_input:
         if "." not in ticker_input:
             ticker_input = ticker_input + ".T"
-        price, change_pct, stock_name = get_price_info_jpx(ticker_input)
+        price, change_pct, stock_name = get_price_info(code)
         if price is not None:
             sign = "+" if change_pct >= 0 else ""
             st.write(
