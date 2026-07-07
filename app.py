@@ -101,7 +101,7 @@ if name:
         try:
             with st.spinner("Xの話題銘柄を取得中..."):
                 response = client.models.generate_content(
-                    model="gemini-2.0-flash",
+                    model="gemini-2.5-flash",
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         tools=[
