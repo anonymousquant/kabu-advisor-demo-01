@@ -5,6 +5,8 @@ import yfinance as yf
 import plotly.graph_objects as go
 import requests
 from bs4 import BeautifulSoup
+import gspread
+from google.oauth2.service_account import Credentials
 import csv
 import re
 from datetime import datetime
@@ -20,11 +22,41 @@ NIKKEI225_TOP = {
     "8316", "7267", "7203", "6501", "6752",
 }
 
+SPREADSHEET_NAME = "kabu-advisor-demo-01-log"
+
+
+def get_sheet():
+    """Googleスプレッドシートに接続"""
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"],
+            scopes=scopes
+        )
+        gc = gspread.authorize(creds)
+        sh = gc.open(SPREADSHEET_NAME)
+        return sh.sheet1
+    except Exception as e:
+        return None
+
 
 def log_usage(name, action):
+    """Googleスプレッドシートにログを記録、失敗時はCSVにフォールバック"""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sheet = get_sheet()
+    if sheet:
+        try:
+            sheet.append_row([now, name, action])
+            return
+        except Exception:
+            pass
+    # フォールバック：ローカルCSV
     with open("usage_log.csv", "a", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([datetime.now(), name, action])
+        writer.writerow([now, name, action])
 
 
 def get_price_info(ticker):
@@ -86,7 +118,6 @@ def draw_chart(hist, ticker_label):
 
 
 def scrape_ranking():
-    """Yahoo!ファイナンスの値上がり率ランキングを取得"""
     candidates = []
     try:
         url = "https://finance.yahoo.co.jp/stocks/ranking/up?market=all&term=daily&page=1"
@@ -124,7 +155,6 @@ def scrape_ranking():
 
 
 def score_candidates(candidates):
-    """日経225寄与度でスコアリングして上位10銘柄を返す"""
     scored = []
     for c in candidates:
         code = c["code"]
@@ -191,17 +221,26 @@ if name:
 
         try:
             with st.spinner("Geminiが銘柄を分析中..."):
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        tools=[
-                            types.Tool(
-                                google_search=types.GoogleSearchRetrieval()
-                            )
-                        ]
-                    ),
-                )
+                import time
+                for attempt in range(3):
+                    try:
+                        response = client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                tools=[
+                                    types.Tool(
+                                        google_search=types.GoogleSearchRetrieval()
+                                    )
+                                ]
+                            ),
+                        )
+                        break
+                    except Exception as e:
+                        if attempt < 2:
+                            time.sleep(10)
+                        else:
+                            raise e
         except Exception as e:
             st.error(
                 f"Geminiへの接続に失敗しました。しばらく待ってから再試行してください。\n\n({e})"
