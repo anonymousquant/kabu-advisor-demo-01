@@ -3,12 +3,22 @@ from google import genai
 from google.genai import types
 import yfinance as yf
 import plotly.graph_objects as go
+import requests
+from bs4 import BeautifulSoup
 import csv
 import re
 from datetime import datetime
 
 api_key = st.secrets["GEMINI_API_KEY"]
 client = genai.Client(api_key=api_key)
+
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+NIKKEI225_TOP = {
+    "9983", "6857", "9984", "6367", "8035",
+    "7974", "6954", "9433", "6861", "4063",
+    "8316", "7267", "7203", "6501", "6752",
+}
 
 
 def log_usage(name, action):
@@ -75,6 +85,60 @@ def draw_chart(hist, ticker_label):
     st.plotly_chart(fig, use_container_width=True)
 
 
+def scrape_ranking():
+    """Yahoo!ファイナンスの値上がり率ランキングを取得"""
+    candidates = []
+    try:
+        url = "https://finance.yahoo.co.jp/stocks/ranking/up?market=all&term=daily&page=1"
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(r.text, "html.parser")
+        rows = soup.select("table tbody tr")
+        for row in rows[:30]:
+            cols = row.find_all("td")
+            if len(cols) >= 4:
+                name_cell = cols[1].get_text(strip=True)
+                code_cell = cols[2].get_text(strip=True) if len(cols) > 2 else ""
+                code_match = re.search(r"\d{4}", code_cell or name_cell)
+                if code_match:
+                    code = code_match.group()
+                    candidates.append({"code": code, "name": name_cell})
+    except Exception:
+        pass
+
+    if not candidates:
+        try:
+            url = "https://minkabu.jp/stock/ranking/daily_high_low_rate"
+            r = requests.get(url, headers=HEADERS, timeout=10)
+            soup = BeautifulSoup(r.text, "html.parser")
+            rows = soup.select("table tbody tr")
+            for row in rows[:30]:
+                text = row.get_text(" ", strip=True)
+                code_match = re.search(r"\b(\d{4})\b", text)
+                if code_match:
+                    code = code_match.group()
+                    candidates.append({"code": code, "name": text[:20]})
+        except Exception:
+            pass
+
+    return candidates
+
+
+def score_candidates(candidates):
+    """日経225寄与度でスコアリングして上位10銘柄を返す"""
+    scored = []
+    for c in candidates:
+        code = c["code"]
+        if code in NIKKEI225_TOP:
+            weight = 3.0
+        elif len(code) == 4 and code.startswith(("6", "7", "8", "9")):
+            weight = 1.5
+        else:
+            weight = 0.3
+        scored.append((weight, c))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [c for _, c in scored[:10]]
+
+
 st.title("株アドバイスツール")
 name = st.text_input("お名前を入力してください")
 
@@ -86,31 +150,47 @@ if name:
         st.session_state.logged_in = True
 
     if st.button("Xで話題の銘柄を見る"):
-        prompt = """
-        今日の日本株市場で話題になっている銘柄を5つ挙げてください。
-        以下の優先順位でウェイトをかけて選定してください：
-        
-       【選定基準・優先順位】
-        1. 日経平均採用銘柄かつ寄与度上位（ファーストリテイリング、東京エレクトロン、ソフトバンクGなど）→ 最優先
-        2. 日経平均採用銘柄（寄与度中程度）→ 優先
-        3. 日経平均非採用だが時価総額上位・出来高急増銘柄 → 考慮
-        4. 小型株・新興株（ispaceなど） → 最低ウェイト0.3倍程度
-        
-        加えて以下の条件も考慮してください：
-        - 本日の値動きが特に大きかった銘柄
-        - 出来高が急増した銘柄
-        - X（旧Twitter）で話題になっている銘柄
-        
-        言及されているという客観的事実のみで紹介し、
-        「おすすめ」「買い時」「上昇が期待できる」など
-        投資判断を示す表現は使わないでください。
-        出力形式（厳守）：
-        銘柄名（証券コード4桁）｜話題になっている理由
-        銘柄名は必ず日本語で記載してください。
-        区切り文字は必ず｜（全角パイプ）を使ってください。
-        """
+
+        with st.spinner("本日の値動き上位銘柄を取得中..."):
+            candidates = scrape_ranking()
+            top_candidates = score_candidates(candidates)
+
+        if top_candidates:
+            candidate_text = "\n".join(
+                [f"{c['code']}（{c['name'][:15]}）" for c in top_candidates]
+            )
+            prompt = f"""
+            以下は本日の日本株市場で値動きが大きかった銘柄の候補リストです：
+
+            {candidate_text}
+
+            この中からX（旧Twitter）でも話題になっている銘柄を5つ選び、
+            話題になっている理由を客観的事実のみで説明してください。
+            「おすすめ」「買い時」「上昇が期待できる」など
+            投資判断を示す表現は使わないでください。
+            出力形式（厳守）：
+            銘柄名（証券コード4桁）｜話題になっている理由
+            銘柄名は必ず日本語で記載してください。
+            区切り文字は必ず｜（全角パイプ）を使ってください。
+            """
+        else:
+            prompt = """
+            今日の日本株市場で以下の条件に当てはまる銘柄を5つ挙げてください：
+            - 本日の値動きが特に大きかった銘柄
+            - 出来高が急増した銘柄
+            - X（旧Twitter）で話題になっている銘柄
+            日経平均寄与度上位銘柄を優先し、小型株は最低0.3倍のウェイトで選定してください。
+            言及されているという客観的事実のみで紹介し、
+            「おすすめ」「買い時」「上昇が期待できる」など
+            投資判断を示す表現は使わないでください。
+            出力形式（厳守）：
+            銘柄名（証券コード4桁）｜話題になっている理由
+            銘柄名は必ず日本語で記載してください。
+            区切り文字は必ず｜（全角パイプ）を使ってください。
+            """
+
         try:
-            with st.spinner("Xの話題銘柄を取得中..."):
+            with st.spinner("Geminiが銘柄を分析中..."):
                 response = client.models.generate_content(
                     model="gemini-2.5-flash",
                     contents=prompt,
