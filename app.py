@@ -82,6 +82,7 @@ def get_price_info_jpx(code):
         change_pct = (close - prev_close) / prev_close * 100
         return close, change_pct, name
     except Exception as e:
+        st.write(f"DEBUG {ticker}: {e}")
         return None, None, None
 
 def get_chart_data(ticker):
