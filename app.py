@@ -317,7 +317,7 @@ if name:
     if ticker_input:
         if "." not in ticker_input:
             ticker_input = ticker_input + ".T"
-        price, change_pct, stock_name = get_price_info(ticker_input)
+        price, change_pct, stock_name = get_price_info_jpx(ticker_input)
         if price is not None:
             sign = "+" if change_pct >= 0 else ""
             st.write(
