@@ -12,6 +12,8 @@ import re
 from datetime import datetime
 import pandas_datareader as pdr
 from datetime import datetime, timedelta
+import pandas as pd
+import io
 
 api_key = st.secrets["GEMINI_API_KEY"]
 client = genai.Client(api_key=api_key)
@@ -61,22 +63,25 @@ def log_usage(name, action):
         writer.writerow([now, name, action])
 
 
-def get_price_info(ticker):
+def get_price_info_jpx(code):
+    """JPXの当日データから株価を取得"""
     try:
-        # stooq経由で取得（例：7203.JPのような形式）
-        code = ticker.replace(".T", "")
-        stooq_ticker = f"{code}.JP"
-        end = datetime.today()
-        start = end - timedelta(days=30)
-        df = pdr.get_data_stooq(stooq_ticker, start=start, end=end)
-        if df is None or len(df) < 2:
+        # JPXの全銘柄当日データ（無料公開）
+        url = "https://www.jpx.co.jp/markets/statistics-equities/daily/tvdivq0000001vg2-att/data_j.xls"
+        df = pd.read_excel(url, header=0)
+        df.columns = df.columns.str.strip()
+        
+        # コードで絞り込み
+        row = df[df["コード"].astype(str).str.zfill(4) == str(code).zfill(4)]
+        if row.empty:
             return None, None, None
-        df = df.sort_index()
-        latest = df["Close"].iloc[-1]
-        prev = df["Close"].iloc[-2]
-        change_pct = (latest - prev) / prev * 100
-        return latest, change_pct, code
-    except Exception:
+        
+        name = row["銘柄名"].iloc[0]
+        close = float(row["終値"].iloc[0])
+        prev_close = float(row["前日終値"].iloc[0])
+        change_pct = (close - prev_close) / prev_close * 100
+        return close, change_pct, name
+    except Exception as e:
         return None, None, None
 
 def get_chart_data(ticker):
@@ -281,7 +286,8 @@ if name:
         tbody = ""
         for jp_name, code, _ in matches:
             ticker = code + ".T"
-            price, change_pct, _ = get_price_info(ticker)
+            code = ticker.replace(".T", "")
+            price, change_pct, stock_name_jpx = get_price_info_jpx(code)
             if price is not None:
                 sign = "+" if change_pct >= 0 else ""
                 tbody += (
