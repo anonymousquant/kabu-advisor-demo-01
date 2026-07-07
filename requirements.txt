@@ -2,3 +2,5 @@ streamlit
 google-genai
 yfinance
 plotly
+requests
+beautifulsoup4
