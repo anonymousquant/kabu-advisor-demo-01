@@ -329,6 +329,7 @@ if name:
     if ticker_input:
         if "." not in ticker_input:
             ticker_input = ticker_input + ".T"
+        code = ticker_input.replace(".T", "")  
         price, change_pct, stock_name = get_price_info(code)
         if price is not None:
             sign = "+" if change_pct >= 0 else ""
