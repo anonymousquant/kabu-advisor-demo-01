@@ -254,7 +254,11 @@ if name:
 
         log_usage(name, "銘柄照会")
 
-        lines = [l.strip() for l in response.text.strip().split("\n") if "｜" in l]
+        lines = [
+            re.sub(r"^[\*\-•]+\s*", "", l.strip())
+            for l in response.text.strip().split("\n")
+            if "｜" in l
+        ]
         matches = []
         for line in lines:
             parts = line.split("｜", 1)
