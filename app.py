@@ -300,6 +300,9 @@ if name:
             )
             st.stop()
 
+        if not matches:
+            st.warning("話題の銘柄を取得できませんでした。しばらく待ってから再試行してください。")
+
         log_usage(name, "銘柄照会")
         st.session_state.matches = matches
 
