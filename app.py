@@ -9,6 +9,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import csv
 import re
+import time
 from datetime import datetime
 import pandas_datareader as pdr
 from datetime import datetime, timedelta
@@ -174,10 +175,94 @@ def score_candidates(candidates):
     return [c for _, c in scored[:10]]
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_topic_matches():
+    """話題の銘柄をスクレイピング+Geminiで分析（1時間キャッシュ）"""
+    candidates = scrape_ranking()
+    top_candidates = score_candidates(candidates)
+
+    if top_candidates:
+        candidate_text = "\n".join(
+            [f"{c['code']}（{c['name'][:15]}）" for c in top_candidates]
+        )
+        prompt = f"""
+        以下は本日の日本株市場で値動きが大きかった銘柄の候補リストです：
+
+        {candidate_text}
+
+        この中からX（旧Twitter）でも話題になっている銘柄を5つ選び、
+        話題になっている理由を客観的事実のみで説明してください。
+        「おすすめ」「買い時」「上昇が期待できる」など
+        投資判断を示す表現は使わないでください。
+        出力形式（厳守）：
+        銘柄名（証券コード4桁）｜話題になっている理由
+        銘柄名は必ず日本語で記載してください。
+        区切り文字は必ず｜（全角パイプ）を使ってください。
+        """
+    else:
+        prompt = """
+        今日の日本株市場で以下の条件に当てはまる銘柄を5つ挙げてください：
+        - 本日の値動きが特に大きかった銘柄
+        - 出来高が急増した銘柄
+        - X（旧Twitter）で話題になっている銘柄
+        日経平均寄与度上位銘柄を優先し、小型株は最低0.3倍のウェイトで選定してください。
+        言及されているという客観的事実のみで紹介し、
+        「おすすめ」「買い時」「上昇が期待できる」など
+        投資判断を示す表現は使わないでください。
+        出力形式（厳守）：
+        銘柄名（証券コード4桁）｜話題になっている理由
+        銘柄名は必ず日本語で記載してください。
+        区切り文字は必ず｜（全角パイプ）を使ってください。
+        """
+
+    response = None
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    tools=[
+                        types.Tool(
+                            google_search=types.GoogleSearch()
+                        )
+                    ]
+                ),
+            )
+            break
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(10)
+            else:
+                raise e
+
+    lines = [
+        re.sub(r"^[\*\-•]+\s*", "", l.strip())
+        for l in response.text.strip().split("\n")
+        if "｜" in l
+    ]
+    matches = []
+    for line in lines:
+        parts = line.split("｜", 1)
+        if len(parts) == 2:
+            header, description = parts
+            m = re.search(r"(.+?)[（(](\d{4})[）)]", header)
+            if m:
+                jp_name = m.group(1).strip()
+                code = m.group(2)
+                matches.append((jp_name, code, description.strip()))
+    return matches
+
+
 st.title("株アドバイスツール")
-name = st.text_input("お名前を入力してください")
+
+query_name = st.query_params.get("name", "")
+name = st.text_input("お名前を入力してください", value=query_name)
 
 if name:
+    if st.query_params.get("name") != name:
+        st.query_params["name"] = name
+
     st.write(f"こんにちは、{name}さん！")
 
     if "logged_in" not in st.session_state:
@@ -185,67 +270,9 @@ if name:
         st.session_state.logged_in = True
 
     if st.button("Xで話題の銘柄を見る"):
-
-        with st.spinner("本日の値動き上位銘柄を取得中..."):
-            candidates = scrape_ranking()
-            top_candidates = score_candidates(candidates)
-
-        if top_candidates:
-            candidate_text = "\n".join(
-                [f"{c['code']}（{c['name'][:15]}）" for c in top_candidates]
-            )
-            prompt = f"""
-            以下は本日の日本株市場で値動きが大きかった銘柄の候補リストです：
-
-            {candidate_text}
-
-            この中からX（旧Twitter）でも話題になっている銘柄を5つ選び、
-            話題になっている理由を客観的事実のみで説明してください。
-            「おすすめ」「買い時」「上昇が期待できる」など
-            投資判断を示す表現は使わないでください。
-            出力形式（厳守）：
-            銘柄名（証券コード4桁）｜話題になっている理由
-            銘柄名は必ず日本語で記載してください。
-            区切り文字は必ず｜（全角パイプ）を使ってください。
-            """
-        else:
-            prompt = """
-            今日の日本株市場で以下の条件に当てはまる銘柄を5つ挙げてください：
-            - 本日の値動きが特に大きかった銘柄
-            - 出来高が急増した銘柄
-            - X（旧Twitter）で話題になっている銘柄
-            日経平均寄与度上位銘柄を優先し、小型株は最低0.3倍のウェイトで選定してください。
-            言及されているという客観的事実のみで紹介し、
-            「おすすめ」「買い時」「上昇が期待できる」など
-            投資判断を示す表現は使わないでください。
-            出力形式（厳守）：
-            銘柄名（証券コード4桁）｜話題になっている理由
-            銘柄名は必ず日本語で記載してください。
-            区切り文字は必ず｜（全角パイプ）を使ってください。
-            """
-
         try:
             with st.spinner("Geminiが銘柄を分析中..."):
-                import time
-                for attempt in range(3):
-                    try:
-                        response = client.models.generate_content(
-                            model="gemini-2.5-flash",
-                            contents=prompt,
-                            config=types.GenerateContentConfig(
-                                tools=[
-                                    types.Tool(
-                                        google_search=types.GoogleSearch()
-                                    )
-                                ]
-                            ),
-                        )
-                        break
-                    except Exception as e:
-                        if attempt < 2:
-                            time.sleep(10)
-                        else:
-                            raise e
+                matches = get_topic_matches()
         except Exception as e:
             st.error(
                 f"Geminiへの接続に失敗しました。しばらく待ってから再試行してください。\n\n({e})"
@@ -253,23 +280,6 @@ if name:
             st.stop()
 
         log_usage(name, "銘柄照会")
-
-        lines = [
-            re.sub(r"^[\*\-•]+\s*", "", l.strip())
-            for l in response.text.strip().split("\n")
-            if "｜" in l
-        ]
-        matches = []
-        for line in lines:
-            parts = line.split("｜", 1)
-            if len(parts) == 2:
-                header, description = parts
-                m = re.search(r"(.+?)[（(](\d{4})[）)]", header)
-                if m:
-                    jp_name = m.group(1).strip()
-                    code = m.group(2)
-                    matches.append((jp_name, code, description.strip()))
-
         st.session_state.matches = matches
 
     if "matches" in st.session_state and st.session_state.matches:
