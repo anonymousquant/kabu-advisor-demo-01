@@ -215,43 +215,62 @@ def get_topic_matches():
         区切り文字は必ず｜（全角パイプ）を使ってください。
         """
 
-    response = None
-    for attempt in range(3):
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    tools=[
-                        types.Tool(
-                            google_search=types.GoogleSearch()
-                        )
-                    ]
-                ),
-            )
-            break
-        except Exception as e:
-            if attempt < 2:
-                time.sleep(10)
-            else:
-                raise e
-
-    lines = [
-        re.sub(r"^[\*\-•]+\s*", "", l.strip())
-        for l in response.text.strip().split("\n")
-        if "｜" in l
-    ]
     matches = []
-    for line in lines:
-        parts = line.split("｜", 1)
-        if len(parts) == 2:
-            header, description = parts
-            m = re.search(r"(.+?)[（(](\d{4})[）)]", header)
-            if m:
-                jp_name = m.group(1).strip()
-                code = m.group(2)
-                matches.append((jp_name, code, description.strip()))
-    return matches
+    for parse_attempt in range(2):
+        response = None
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        tools=[
+                            types.Tool(
+                                google_search=types.GoogleSearch()
+                            )
+                        ]
+                    ),
+                )
+                break
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(10)
+                else:
+                    raise e
+
+        lines = [
+            re.sub(r"^[\*\-•]+\s*", "", l.strip())
+            for l in response.text.strip().split("\n")
+            if "｜" in l
+        ]
+        matches = []
+        for line in lines:
+            parts = line.split("｜", 1)
+            if len(parts) == 2:
+                header, description = parts
+                m = re.search(r"(.+?)[（(](\d{4})[）)]", header)
+                if m:
+                    jp_name = m.group(1).strip()
+                    code = m.group(2)
+                    matches.append((jp_name, code, description.strip()))
+
+        if len(matches) >= 5:
+            break
+
+    # Geminiの結果だけで5件に満たない場合、値動き上位銘柄から補充して必ず5件にする
+    if len(matches) < 5:
+        used_codes = {code for _, code, _ in matches}
+        for c in top_candidates:
+            if len(matches) >= 5:
+                break
+            if c["code"] in used_codes:
+                continue
+            matches.append(
+                (c["name"], c["code"], "本日の値動き上位銘柄として選出されました。")
+            )
+            used_codes.add(c["code"])
+
+    return matches[:5]
 
 
 st.title("株アドバイスツール")
