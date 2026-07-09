@@ -235,7 +235,7 @@ if name:
                             config=types.GenerateContentConfig(
                                 tools=[
                                     types.Tool(
-                                        google_search=types.GoogleSearchRetrieval()
+                                        google_search=types.GoogleSearch()
                                     )
                                 ]
                             ),
