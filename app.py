@@ -175,7 +175,7 @@ def score_candidates(candidates):
     return [c for _, c in scored[:10]]
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=10800, show_spinner=False)
 def get_topic_matches():
     """話題の銘柄をスクレイピング+Geminiで分析（1時間キャッシュ）"""
     candidates = scrape_ranking()
