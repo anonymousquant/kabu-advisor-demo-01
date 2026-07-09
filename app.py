@@ -239,6 +239,7 @@ def get_topic_matches():
                 else:
                     raise e
 
+        print(f"DEBUG raw response: {response.text[:400]!r}")
         lines = [
             re.sub(r"^[\*\-•]+\s*", "", l.strip())
             for l in response.text.strip().split("\n")
