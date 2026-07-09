@@ -180,6 +180,7 @@ def get_topic_matches():
     """話題の銘柄をスクレイピング+Geminiで分析（1時間キャッシュ）"""
     candidates = scrape_ranking()
     top_candidates = score_candidates(candidates)
+    print(f"DEBUG: candidates={len(candidates)} top_candidates={len(top_candidates)}")
 
     if top_candidates:
         candidate_text = "\n".join(
